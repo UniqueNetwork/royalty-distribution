@@ -1,0 +1,9 @@
+build/
+node_modules/
+secret.js
+.idea
+scripts/node_modules
+scripts/.env.quartz
+scripts/.env.opal
+scripts/.env.rc
+scripts/.env
