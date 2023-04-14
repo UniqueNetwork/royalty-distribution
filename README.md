@@ -21,8 +21,31 @@ The distribution can be initiated by calling `distribute` method. This method wi
 
 The algorithm will calculate the amount to distribute to each address by dividing the total royalties by the number of recepients, then it will iterate over the snapshot and send the amounts to the recepients. This algorithm is also paginated, i.e. the methods receive `pageNumber` parameter, and require it to iterate by 1 between calls, exactly like `takeSnapshop` does. Once the last page is handled, the `lastDistributionBlock` is set to the number of current block.
 
-### Setting up development environment
+## Setting up development environment
 
 ```
 yarn install
+```
+
+## Testing
+
+```
+truffle build
+truffle migrate --network opal
+truffle test --network opal
+```
+
+### Test Collections on Opal
+
+The test PNK and CHEL collections are deployed on Opal network from the snapshot made on April 11th 2023 (exact match of token owners and variable on-chain data).
+
+Collection IDs and addresses:
+```
+PNK
+ID: 1160
+Address: 0x17C4E6453CC49AaaAeaCa894e6d9683E00000488
+
+CHEL
+ID: 1169
+Address: 0x17C4E6453CC49aAaaeACA894E6D9683e00000491
 ```

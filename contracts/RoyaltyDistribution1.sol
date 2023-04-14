@@ -3,16 +3,17 @@ pragma solidity 0.8.15;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+// import "./UniqueNFT.sol";
 
 contract RoyaltyDistribution1 is Ownable {
     // Total number of PNK
     uint public constant PnkTotalCount = 10000;
 
-    // Number of NFTs to handle in one page when making the snapshop
-    uint public constant SnapshotPageSize = 1000;
+    // Number of NFTs to handle in one page when making the snapshot
+    uint public constant SnapshotPageSize = 500;
 
     // Number of recipients to send royalties to in one transaction
-    uint public constant DistrPageSize = 1000;
+    uint public constant DistrPageSize = 500;
 
     // Default snapshot page
     uint public constant DefaultSnapshotPage = 0xffff;
@@ -36,6 +37,7 @@ contract RoyaltyDistribution1 is Ownable {
     // Iterable set of snapshot addresses
     mapping(address => address) public snapShot;
     address public firstSnapshotAddress = address(0);
+    address public lastSnapshotAddress = address(0);
     uint public snapshotSize = 0;
     uint public lastSnapshotTimestamp = 0;
 
@@ -91,11 +93,33 @@ contract RoyaltyDistribution1 is Ownable {
     }
 
     /**
+     * Return True if address is in the snapshot
+     *
+     * @param _addr - address to check
+     */
+    function isAddressInSnapshot(address _addr, address _tail) public view returns(bool) {
+        return ((_addr == _tail) || (_addr == firstSnapshotAddress) || (snapShot[_addr] != address(0)));
+    }
+
+    function addAddressToSnapshot(address _addr, address _tail) private {
+        if ((!isAddressInSnapshot(_addr, _tail)) && (_addr != address(0))) {
+            if (firstSnapshotAddress == address(0)) {
+                firstSnapshotAddress = _addr;
+                snapshotSize = 1;
+            }
+            else if (_tail != address(0)) {
+                snapShot[_tail] = _addr;
+                snapshotSize++;
+            }
+        }
+    }
+
+    /**
      * Take the snapshot (paginated call)
      *
      * @param _page - zero based page number
      */
-    function takeSnapshop(uint _page) public {
+    function takeSnapshot(uint _page) public {
         // Validate the parameters
         require(((lastSnapshotPage == DefaultSnapshotPage) && (_page == 0)) || (_page == lastSnapshotPage + 1));
         require(block.timestamp >= lastSnapshotTimestamp + minSnapshotInterval);
@@ -109,23 +133,30 @@ contract RoyaltyDistribution1 is Ownable {
         // Get the collection contract
         IERC721 pnkCollection = IERC721(punkCollectionAddress);
         IERC721 chelCollection = IERC721(chelCollectionAddress);
+        // ERC721UniqueExtensions pnkCollection = ERC721UniqueExtensions(punkCollectionAddress);
+        // ERC721UniqueExtensions chelCollection = ERC721UniqueExtensions(chelCollectionAddress);
 
-        // Iterate over the next page of punks and populate snapshot
-        address lastSnapshotAddress = address(0);
-        for (uint pnkId = _page * SnapshotPageSize + 1; pnkId <= (_page + 1) * SnapshotPageSize; pnkId++) {
-            address pnkOwner = pnkCollection.ownerOf(pnkId);
+        // Iterate over the next page of punks and chelobricks and populate snapshot
+        // This loop is O(n) in gas. It is also bounded by SnapshotPageSize.
+        address current = lastSnapshotAddress;
+        for (uint id = _page * SnapshotPageSize + 1; id <= (_page + 1) * SnapshotPageSize; id++) {
+            // Check if i-th punk owner also owns a chelobrick
+            address pnkOwner = pnkCollection.ownerOf(id);
             if (chelCollection.balanceOf(pnkOwner) != 0) {
-                if (firstSnapshotAddress == address(0)) {
-                    firstSnapshotAddress = pnkOwner;
-                    snapshotSize = 1;
-                }
-                if (lastSnapshotAddress != address(0)) {
-                    snapShot[lastSnapshotAddress] = pnkOwner;
-                    snapshotSize++;
-                }
-                lastSnapshotAddress = pnkOwner;
+                addAddressToSnapshot(pnkOwner, current);
+                current = pnkOwner;
+            }
+
+            // Check if i-th chelobrick owner also owns a punk
+            address chelOwner = chelCollection.ownerOf(id);
+            if (pnkCollection.balanceOf(chelOwner) != 0) {
+                addAddressToSnapshot(chelOwner, current);
+                current = chelOwner;
             }
         }
+
+        // Save the tail of the snapshot to pick up from in the next page
+        lastSnapshotAddress = current;
 
         // Last page
         if (_page == PnkTotalCount / SnapshotPageSize - 1) {
@@ -144,29 +175,30 @@ contract RoyaltyDistribution1 is Ownable {
                 // will be distributed in the next snapshot
                 accumulatedRoyalties = 0;
             }
+        } else {
+            lastSnapshotPage = _page;
         }
     }
 
     /**
      * Clear the snapshot (needs to be called multiple times until emits SnapshotIterationFinished event)
      */
-    function clearSnapshop() public {
+    function clearSnapshot() public {
         // Require the snapshot to expire
         require(block.timestamp >= lastSnapshotTimestamp + minSnapshotInterval);
 
         // Delete up to SnapshotPageSize addresses from snapshot
-        address lastSnapshotAddress = firstSnapshotAddress;
+        address current = firstSnapshotAddress;
         for (uint i=0; i<SnapshotPageSize; i++) {
             // Get the key address to delete
-            address keyToDelete = snapShot[lastSnapshotAddress];
+            address keyToDelete = snapShot[current];
 
             // Move to the next address
-            lastSnapshotAddress = snapShot[lastSnapshotAddress];
+            current = snapShot[current];
 
             // Check if we finished deleting
             if (keyToDelete == address(0)) {
                 snapshotSize = 0;
-                disburseAmount = 0;
                 emit SnapshotIterationFinished();
                 break;
             }
@@ -175,8 +207,12 @@ contract RoyaltyDistribution1 is Ownable {
             snapShot[keyToDelete] = address(0);
         }
 
-        // Point to the address where we stopped (could be address(0), in which case this is the end)
-        firstSnapshotAddress = lastSnapshotAddress;
+        // Point snapshot head to the address where we stopped (could be address(0), in which case this is the end)
+        firstSnapshotAddress = current;
+
+        // Unconditionally clear the other state variables of expired snapshot
+        lastSnapshotPage = DefaultSnapshotPage;
+        disburseAmount = 0;
     }
 
     /**
